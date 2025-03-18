@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>jsPsych IAT 实验（中国版）</title>
+    
+    <!-- 引入 jsPsych 及相关插件 -->
+    <script src="https://unpkg.com/jspsych@7.3.3"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-iat-html"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-preload"></script>
+
+    <!-- XLSX 解析库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+
+    <!-- CSS 样式优化 -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f9f9f9;
+        }
+        .instructions {
+            font-size: 22px;
+            margin-bottom: 20px;
+        }
+        .category-label {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .stimulus {
+            font-size: 32px;
+            color: black;
+        }
+        .feedback-correct {
+            font-size: 50px;
+            color: green;
+            font-weight: bold;
+        }
+        .feedback-wrong {
+            font-size: 50px;
+            color: red;
+            font-weight: bold;
+        }
+        /* ✅ 统一图片大小，确保所有图片都一致 */
+        img {
+            width: 200px !important;
+            height: 200px !important;
+            object-fit: contain;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>正在加载实验数据，请稍候...</h1>
+
+    <script>
+        const participantID = prompt("请输入您的编号或姓名（用于数据存储）:");
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const filename = `IAT_${participantID}_${timestamp}.csv`;
+
+        const jsPsych = initJsPsych({
+            on_finish: function() {
+                const data = jsPsych.data.get().filter({ trial_type: 'iat-html' });
+
+                const correct_trials = data.filter({ correct: true }).count();
+                const total_trials = data.count();
+                const accuracy = Math.round((correct_trials / total_trials) * 100);
+                const mean_rt = Math.round(data.filter({ correct: true }).select('rt').mean());
+
+                document.body.innerHTML = `
+                    <h2>实验结果</h2>
+                    <p>正确率: <strong>${accuracy}%</strong></p>
+                    <p>平均反应时: <strong>${mean_rt} 毫秒</strong></p>
+                    <p>数据已自动保存到 CSV 文件</p>
+                `;
+
+                const clean_data = data.filterColumns(['stage', 'stimulus', 'response', 'correct', 'rt']);
+                clean_data.localSave('csv', filename);
+            }
+        });
+
+        function loadExcelAndRunExperiment() {
+            fetch("conditions_CN1.xlsx")
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP 错误！状态码: ${response.status}`);
+                    }
+                    console.log("📥 Excel 文件成功加载");
+                    return response.arrayBuffer();
+                })
+                .then(data => {
+                    console.log("🔍 开始解析 Excel 数据");
+                    const workbook = XLSX.read(new Uint8Array(data), { type: "array" });
+                    console.log("📄 Sheet 名称:", workbook.SheetNames);
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet);
+                    console.log("✅ 解析成功，数据:", jsonData);
+                    setupAndRunExperiment(jsonData);
+                })
+                .catch(error => {
+                    document.body.innerHTML = `<h2>实验数据加载失败，请检查文件路径</h2>`;
+                    console.error("加载 Excel 出错:", error);
+                });
+        }
+
+        function setupAndRunExperiment(jsonData) {
+            let timeline = [];
+
+            // ✅ 设定不同实验阶段的按键规则
+            const category_labels = {
+                "内群体练习": { left: ["中国", "积极"], right: ["消极"] },
+                "内群体测试": { left: ["中国", "积极"], right: ["消极"] },
+                "内群体反转练习": { left: ["积极"], right: ["中国", "消极"] },
+                "内群体反转测试": { left: ["积极"], right: ["中国", "消极"] },
+                "外群体练习": { left: ["美国", "积极"], right: ["消极"] },
+                "外群体测试": { left: ["美国", "积极"], right: ["消极"] },
+                "外群体反转练习": { left: ["积极"], right: ["美国", "消极"] },
+                "外群体反转测试": { left: ["积极"], right: ["美国", "消极"] }
+            };
+
+            const practiceStages = ["内群体练习", "内群体反转练习", "外群体练习", "外群体反转练习"];
+            const stages = [...new Set(jsonData.map(trial => trial.stage))];
+
+            for (let stage of stages) {
+                const stage_trials = jsonData.filter(trial => trial.stage === stage);
+                const leftLabel = category_labels[stage]?.left.join(" + ") || "未知";
+                const rightLabel = category_labels[stage]?.right.join(" + ") || "未知";
+
+                timeline.push({
+                    type: jsPsychHtmlKeyboardResponse,
+                    stimulus: `
+                        <h2>${stage}</h2>
+                        <p>按 <strong>F</strong> 选择左侧类别: <strong>${leftLabel}</strong></p>
+                        <p>按 <strong>J</strong> 选择右侧类别: <strong>${rightLabel}</strong></p>
+                        <p>按 "空格" 继续</p>
+                    `,
+                    choices: [" "]
+                });
+
+                stage_trials.forEach(trial => {
+                    let stimulus = "";
+                    if (trial.imagePath?.trim()) {
+                        stimulus += `<img src="./images/${trial.imagePath}" width="200" height="200"><br>`;
+                    }
+                    if (trial.word?.trim()) {
+                        stimulus += `<span class="stimulus">${trial.word}</span>`;
+                    }
+
+                    const correctKey = category_labels[stage]?.left.includes(trial.category) ? "f" : "j";
+
+                    const mainTrial = {
+                        type: jsPsychIatHtml,
+                        stimulus: stimulus,
+                        stim_key_association: correctKey === "f" ? "left" : "right",
+                        left_category_label: [`<span class="category-label">${leftLabel}</span>`],
+                        right_category_label: [`<span class="category-label">${rightLabel}</span>`],
+                        left_category_key: 'f',
+                        right_category_key: 'j',
+                        bottom_instructions: `<p class="instructions">按 <strong>F</strong> 选择左侧，按 <strong>J</strong> 选择右侧</p>`,
+                        trial_duration: 3000,
+                        force_correct_key_press: true,
+                        data: { correct_response: correctKey }
+                    };
+
+                    timeline.push(mainTrial);
+
+                    if (practiceStages.includes(stage)) {
+                        timeline.push({
+                            type: jsPsychHtmlKeyboardResponse,
+                            stimulus: function() {
+                                const lastTrial = jsPsych.data.getLastTrialData().values()[0];
+                                return lastTrial.response === lastTrial.correct_response ? 
+                                    '<span class="feedback-correct">✔</span>' : 
+                                    '<span class="feedback-wrong">✗</span>';
+                            },
+                            trial_duration: 500,
+                            choices: "NO_KEYS"
+                        });
+                    }
+                });
+            }
+
+            jsPsych.run(timeline);
+        }
+
+        loadExcelAndRunExperiment();
+    </script>
+</body>
+</html>
